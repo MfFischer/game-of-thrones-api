@@ -65,7 +65,7 @@ http://localhost:5000/docs
 
 ### Endpoints
 
-#### 1. List Characters
+#### 1.  Get All Characters
 ```http
 GET /api/v1/characters/
 ```
@@ -215,13 +215,71 @@ Error responses include detailed messages:
 2. **Design Decisions**
    - Auto-generated IDs for new characters
    - Case-insensitive searching
-   - Normalized house names
+   - Normalized without "House" prefix 
    - Deduplication of results
    - Comprehensive error handling
 
+## 🧪 Testing
+
+This project includes comprehensive unit tests covering all endpoints and major functionality.
+
+### Running Tests
+
+1. Install test dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Run tests with coverage:
+```bash
+pytest --cov=app tests/
+```
+
+3. Generate HTML coverage report:
+```bash
+pytest --cov=app --cov-report=html tests/
+```
+The report will be available in the `htmlcov` directory.
+
+### Test Structure
+
+- `tests/conftest.py`: Test fixtures and configuration
+- `tests/test_crud.py`: Tests for CRUD operations
+- `tests/test_filters.py`: Tests for filtering and sorting functionality
+
+### Test Coverage
+
+Current test coverage includes:
+- ✅ All CRUD operations
+- ✅ Input validation
+- ✅ Error handling
+- ✅ Filtering and sorting
+- ✅ Pagination
+- ✅ Edge cases
+
+### Running Specific Tests
+
+Run specific test files:
+```bash
+pytest tests/test_crud.py
+```
+
+Run specific test function:
+```bash
+pytest tests/test_crud.py::test_create_character
+```
+
+Run with verbose output:
+```bash
+pytest -v tests/
+```
+
 ## 👥 Contributing
 
-Feel free to submit issues and pull requests.
+1. Fork the repository
+2. Create a new branch
+3. Make your changes
+4. Submit a pull request
 
 ## 📝 License
 

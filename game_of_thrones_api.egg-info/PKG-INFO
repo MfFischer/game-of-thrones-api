@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: game-of-thrones-api
+Version: 1.0.0
+Requires-Dist: flask
+Requires-Dist: flask-restx
+Requires-Dist: marshmallow
+Requires-Dist: python-dotenv

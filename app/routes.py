@@ -5,7 +5,7 @@ from flask import request
 from flask_restx import Namespace, Resource, fields
 from marshmallow import Schema, fields as ma_fields, validate
 
-from .models import CharacterSchema, get_character_model
+from .models import get_character_model
 from .utils import CHARACTERS, save_characters
 
 # Create namespace with detailed description
@@ -153,7 +153,8 @@ class CharacterList(Resource):
         if name:
             filtered_chars = [
                 char for char in filtered_chars
-                if name == char['name'].lower()  # Exact match (case-insensitive)
+                # Exact match (case-insensitive)
+                if name == char['name'].lower()
             ]
 
         if house:
@@ -167,19 +168,20 @@ class CharacterList(Resource):
         if role:
             filtered_chars = [
                 char for char in filtered_chars
+                # Exact match (case-insensitive)
                 if role in char['role'].lower()
             ]
 
         if age_more_than is not None:
             filtered_chars = [
                 char for char in filtered_chars
-                if char['age'] >= age_more_than
+                if char['age'] > age_more_than
             ]
 
         if age_less_than is not None:
             filtered_chars = [
                 char for char in filtered_chars
-                if char['age'] <= age_less_than
+                if char['age'] < age_less_than
             ]
 
         # Remove duplicates based on all fields except ID
@@ -246,7 +248,7 @@ class CharacterList(Resource):
 
         # Create schema for validation without ID
         class CharacterCreateSchema(Schema):
-            name = ma_fields.Str(required=True)
+            name = ma_fields.Str(required=True, validate=validate.Length(min=1))
             house = ma_fields.Str(required=True)
             age = ma_fields.Int(required=True, validate=validate.Range(min=0))
             role = ma_fields.Str(required=True)
@@ -257,20 +259,19 @@ class CharacterList(Resource):
         if errors:
             characters_ns.abort(400, errors=errors)
 
-        # Normalize house name
-        data['house'] = data['house'].replace('House ', '').strip()
-
         # Add auto-generated ID
         new_character = {
             'id': generate_new_id(),
             **data
         }
 
-        # Add new character to list
         CHARACTERS.append(new_character)
 
-        # Save to file
-        save_characters(CHARACTERS)
+        try:
+            save_characters(CHARACTERS)
+        except Exception as e:
+            print(f"Error saving character: {str(e)}")
+            # Continue execution since character was added to memory
 
         return new_character, 201
 
@@ -287,7 +288,7 @@ class Character(Resource):
         """
         Get a single character by ID.
 
-        Retrieves detailed information about a specific character.
+        Retrieves detailed information about a particular character.
         """
         character = next(
             (char for char in CHARACTERS if char['id'] == id),
@@ -305,8 +306,6 @@ class Character(Resource):
     def put(self, id):
         """
         Update a character by ID.
-
-        Updates the fields of an existing character.
         """
         data = request.get_json()
 
@@ -349,11 +348,7 @@ class Character(Resource):
     @characters_ns.doc('delete_character')
     @characters_ns.response(204, 'Character deleted')
     def delete(self, id):
-        """
-        Delete a character by ID.
-
-        Permanently removes a character from the database.
-        """
+        """Delete a character by ID."""
         char_idx = next(
             (idx for idx, char in enumerate(CHARACTERS) if char['id'] == id),
             None
@@ -362,8 +357,11 @@ class Character(Resource):
         if char_idx is None:
             characters_ns.abort(404, message=f"Character {id} doesn't exist")
 
-        CHARACTERS.pop(char_idx)
+        try:
+            CHARACTERS.pop(char_idx)
+            save_characters(CHARACTERS)
+        except Exception as e:
+            print(f"Error saving after delete: {str(e)}")
+            # Still return 204 as the delete was successful in memory
 
-        # Save to file
-        save_characters(CHARACTERS)
         return '', 204

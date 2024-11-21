@@ -11,6 +11,25 @@ def get_data_file_path() -> Path:
     project_root = Path(__file__).resolve().parent.parent
     return project_root / 'data' / 'characters.json'
 
+def get_default_characters() -> List[Dict]:
+    """Return default character data."""
+    return [
+        {
+            "id": 1,
+            "name": "Jon Snow",
+            "house": "Stark",
+            "age": 25,
+            "role": "Lord Commander of the Night's Watch"
+        },
+        {
+            "id": 2,
+            "name": "Daenerys Targaryen",
+            "house": "Targaryen",
+            "age": 24,
+            "role": "Queen of the Seven Kingdoms"
+        }
+    ]
+
 def save_characters(characters: List[Dict]) -> None:
     """
     Save characters to JSON file.
@@ -20,6 +39,9 @@ def save_characters(characters: List[Dict]) -> None:
     """
     try:
         data_file = get_data_file_path()
+        # Create all parent directories if they don't exist
+        data_file.parent.mkdir(parents=True, exist_ok=True)
+
         with open(data_file, 'w', encoding='utf-8') as f:
             json.dump(characters, f, indent=4)
         print(f"Successfully saved {len(characters)} characters to file")
@@ -39,47 +61,24 @@ def load_characters() -> List[Dict]:
 
         if not data_file.exists():
             print(f"Warning: {data_file} not found!")
-            # Create sample data
-            sample_data = [
-                {
-                    "id": 1,
-                    "name": "Jon Snow",
-                    "house": "Stark",
-                    "age": 25,
-                    "role": "Lord Commander of the Night's Watch"
-                },
-                {
-                    "id": 2,
-                    "name": "Daenerys Targaryen",
-                    "house": "Targaryen",
-                    "age": 24,
-                    "role": "Queen of the Seven Kingdoms"
-                },
-                {
-                    "id": 3,
-                    "name": "Tyrion Lannister",
-                    "house": "Lannister",
-                    "age": 38,
-                    "role": "Hand of the Queen"
-                }
-            ]
+            default_data = get_default_characters()
+            save_characters(default_data)
+            return default_data
 
-            # Ensure data directory exists
-            data_dir = data_file.parent
-            data_dir.mkdir(exist_ok=True)
-
-            # Write sample data
-            save_characters(sample_data)
-            return sample_data
-
-        with open(data_file, 'r', encoding='utf-8') as file:
-            data = json.load(file)
-            print(f"Successfully loaded {len(data)} characters")
-            return data
+        try:
+            with open(data_file, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+                print(f"Successfully loaded {len(data)} characters")
+                return data
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON: {str(e)}")
+            default_data = get_default_characters()
+            print("Using default character data")
+            return default_data
 
     except Exception as e:
         print(f"Error loading characters: {str(e)}")
-        return []
+        return get_default_characters()
 
 # Global variable to store characters
 CHARACTERS = load_characters()

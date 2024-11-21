@@ -7,14 +7,14 @@ from flask_restx import fields
 class CharacterSchema(Schema):
     """Schema for validating complete character data (including ID)."""
     id = ma_fields.Int()  # Not required for creation
-    name = ma_fields.Str(required=True)
+    name = ma_fields.Str(required=True, validate=validate.Length(min=1))
     house = ma_fields.Str(required=True)
     age = ma_fields.Int(required=True, validate=validate.Range(min=0))
     role = ma_fields.Str(required=True)
 
 class CharacterCreateSchema(Schema):
     """Schema for validating character creation (without ID)."""
-    name = ma_fields.Str(required=True)
+    name = ma_fields.Str(required=True, validate=validate.Length(min=1))
     house = ma_fields.Str(required=True)
     age = ma_fields.Int(required=True, validate=validate.Range(min=0))
     role = ma_fields.Str(required=True)
