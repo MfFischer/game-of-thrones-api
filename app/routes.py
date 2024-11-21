@@ -3,9 +3,10 @@ API routes and resources.
 """
 from flask import request
 from flask_restx import Namespace, Resource, fields
+from marshmallow import Schema, fields as ma_fields, validate
 
 from .models import CharacterSchema, get_character_model
-from .utils import CHARACTERS
+from .utils import CHARACTERS, save_characters
 
 # Create namespace with detailed description
 characters_ns = Namespace(
@@ -13,8 +14,27 @@ characters_ns = Namespace(
     description='Operations related to Game of Thrones characters'
 )
 
-# Create Swagger model
+def generate_new_id():
+    """
+    Generate a new unique ID for a character.
+
+    Returns:
+        int: New unique ID
+    """
+    if not CHARACTERS:
+        return 1
+    return max(char['id'] for char in CHARACTERS) + 1
+
+# Create Swagger models
 character_model = get_character_model(characters_ns)
+
+# Model for character creation (without ID)
+character_create_model = characters_ns.model('CharacterCreate', {
+    'name': fields.String(required=True, description='Character name'),
+    'house': fields.String(required=True, description='House name'),
+    'age': fields.Integer(required=True, description='Character age'),
+    'role': fields.String(required=True, description='Character role')
+})
 
 # Create documentation models for responses
 list_response = characters_ns.model('ListResponse', {
@@ -29,6 +49,18 @@ error_response = characters_ns.model('ErrorResponse', {
     'message': fields.String(description='Error message'),
     'errors': fields.Raw(description='Detailed error information')
 })
+
+def normalize_house_name(house: str) -> str:
+    """
+    Normalize house name by removing 'House' prefix and extra spaces.
+
+    Args:
+        house (str): House name to normalize
+
+    Returns:
+        str: Normalized house name
+    """
+    return house.lower().replace('house ', '').strip()
 
 def sort_characters(characters, sort_field=None, sort_order='asc'):
     """
@@ -118,16 +150,18 @@ class CharacterList(Resource):
         # Apply filters
         filtered_chars = CHARACTERS.copy()
 
-        if house:
-            filtered_chars = [
-                char for char in filtered_chars
-                if house in char['house'].lower()
-            ]
-
         if name:
             filtered_chars = [
                 char for char in filtered_chars
-                if name in char['name'].lower()
+                if name == char['name'].lower()  # Exact match (case-insensitive)
+            ]
+
+        if house:
+            # Normalize house names
+            normalized_house = normalize_house_name(house)
+            filtered_chars = [
+                char for char in filtered_chars
+                if normalized_house == normalize_house_name(char['house'])
             ]
 
         if role:
@@ -147,6 +181,23 @@ class CharacterList(Resource):
                 char for char in filtered_chars
                 if char['age'] <= age_less_than
             ]
+
+        # Remove duplicates based on all fields except ID
+        def char_key(c):
+            return (c['name'].lower(),
+                   normalize_house_name(c['house']),
+                   c['age'],
+                   c['role'].lower())
+
+        seen = set()
+        unique_chars = []
+        for char in filtered_chars:
+            k = char_key(char)
+            if k not in seen:
+                seen.add(k)
+                unique_chars.append(char)
+
+        filtered_chars = unique_chars
 
         # Apply sorting
         sorted_chars = sort_characters(filtered_chars, sort_by, sort_order)
@@ -178,27 +229,50 @@ class CharacterList(Resource):
         }
 
     @characters_ns.doc('create_character')
-    @characters_ns.expect(character_model)
+    @characters_ns.expect(character_create_model)
     @characters_ns.response(201, 'Character created successfully', character_model)
     @characters_ns.response(400, 'Invalid input', error_response)
     def post(self):
         """
         Create a new character.
 
-        Adds a new character to the database. All fields are required.
+        Creates a new character with auto-generated ID. Required fields:
+        - name (string)
+        - house (string)
+        - age (integer)
+        - role (string)
         """
         data = request.get_json()
 
+        # Create schema for validation without ID
+        class CharacterCreateSchema(Schema):
+            name = ma_fields.Str(required=True)
+            house = ma_fields.Str(required=True)
+            age = ma_fields.Int(required=True, validate=validate.Range(min=0))
+            role = ma_fields.Str(required=True)
+
         # Validate input data
-        schema = CharacterSchema()
+        schema = CharacterCreateSchema()
         errors = schema.validate(data)
         if errors:
             characters_ns.abort(400, errors=errors)
 
-        # Add new character to list
-        CHARACTERS.append(data)
+        # Normalize house name
+        data['house'] = data['house'].replace('House ', '').strip()
 
-        return data, 201
+        # Add auto-generated ID
+        new_character = {
+            'id': generate_new_id(),
+            **data
+        }
+
+        # Add new character to list
+        CHARACTERS.append(new_character)
+
+        # Save to file
+        save_characters(CHARACTERS)
+
+        return new_character, 201
 
 
 @characters_ns.route('/<int:id>')
@@ -226,21 +300,31 @@ class Character(Resource):
         return character
 
     @characters_ns.doc('update_character')
-    @characters_ns.expect(character_model)
+    @characters_ns.expect(character_create_model)
     @characters_ns.response(200, 'Character updated successfully', character_model)
     def put(self, id):
         """
         Update a character by ID.
 
-        Updates all fields of an existing character.
+        Updates the fields of an existing character.
         """
         data = request.get_json()
 
+        # Create schema for validation without ID
+        class CharacterCreateSchema(Schema):
+            name = ma_fields.Str(required=True)
+            house = ma_fields.Str(required=True)
+            age = ma_fields.Int(required=True, validate=validate.Range(min=0))
+            role = ma_fields.Str(required=True)
+
         # Validate input data
-        schema = CharacterSchema()
+        schema = CharacterCreateSchema()
         errors = schema.validate(data)
         if errors:
             characters_ns.abort(400, errors=errors)
+
+        # Normalize house name
+        data['house'] = data['house'].replace('House ', '').strip()
 
         # Find character index
         char_idx = next(
@@ -251,8 +335,15 @@ class Character(Resource):
         if char_idx is None:
             characters_ns.abort(404, message=f"Character {id} doesn't exist")
 
-        # Update character
-        CHARACTERS[char_idx].update(data)
+        # Update character while preserving ID
+        CHARACTERS[char_idx] = {
+            'id': id,
+            **data
+        }
+
+        # Save to file
+        save_characters(CHARACTERS)
+
         return CHARACTERS[char_idx]
 
     @characters_ns.doc('delete_character')
@@ -272,4 +363,7 @@ class Character(Resource):
             characters_ns.abort(404, message=f"Character {id} doesn't exist")
 
         CHARACTERS.pop(char_idx)
+
+        # Save to file
+        save_characters(CHARACTERS)
         return '', 204
