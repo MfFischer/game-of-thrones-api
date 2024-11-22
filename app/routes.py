@@ -4,15 +4,19 @@ API routes and resources.
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from marshmallow import Schema, fields as ma_fields, validate
-
-from .models import get_character_model
+from .models import get_character_model, get_auth_models
 from .utils import CHARACTERS, save_characters
+from .auth import token_required, admin_required, generate_token, USERS, register_user
 
-# Create namespace with detailed description
+# Create namespaces
+auth_ns = Namespace('auth', description='Authentication operations')
 characters_ns = Namespace(
     'characters',
     description='Operations related to Game of Thrones characters'
 )
+
+# Get authentication models
+auth_models = get_auth_models(auth_ns)
 
 def generate_new_id():
     """
@@ -92,6 +96,56 @@ def sort_characters(characters, sort_field=None, sort_order='asc'):
             key=lambda x: x.get(sort_field, 0),
             reverse=reverse
         )
+
+
+# Register endpoint
+@auth_ns.route('/register')
+class Register(Resource):
+    @auth_ns.doc('register')
+    @auth_ns.expect(auth_models['register_input'])
+    @auth_ns.response(201, 'User registered successfully')
+    @auth_ns.response(400, 'Registration failed', auth_models['error_response'])
+    def post(self):
+        """Register a new user"""
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        role = data.get('role', 'user')  # Default role is 'user'
+
+        if not username or not password:
+            return {'message': 'Username and password are required', 'status': 400}, 400
+
+        success, message = register_user(username, password, role)
+        if success:
+            return {'message': message}, 201
+        return {'message': message, 'status': 400}, 400
+
+
+# Authentication routes
+@auth_ns.route('/login')
+class Login(Resource):
+    @auth_ns.doc('login')
+    @auth_ns.expect(auth_models['login_input'])
+    @auth_ns.response(200, 'Success', auth_models['token_response'])
+    @auth_ns.response(401, 'Authentication failed', auth_models['error_response'])
+    def post(self):
+        """Login and receive JWT token"""
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+
+        if not username or not password:
+            return {'message': 'Username and password are required', 'status': 401}, 401
+
+        if username in USERS and USERS[username]['password'] == password:
+            token = generate_token(username)
+            return {
+                'token': token,
+                'type': 'Bearer',
+                'expires_in': 3600  # 1 hour
+            }, 200
+
+        return {'message': 'Invalid credentials', 'status': 401}, 401
 
 @characters_ns.route('/')
 class CharacterList(Resource):
@@ -234,9 +288,11 @@ class CharacterList(Resource):
     @characters_ns.expect(character_create_model)
     @characters_ns.response(201, 'Character created successfully', character_model)
     @characters_ns.response(400, 'Invalid input', error_response)
+    @characters_ns.response(401, 'Authentication required')
+    @token_required
     def post(self):
         """
-        Create a new character.
+        Create a new character (requires authentication).
 
         Creates a new character with auto-generated ID. Required fields:
         - name (string)
@@ -303,9 +359,11 @@ class Character(Resource):
     @characters_ns.doc('update_character')
     @characters_ns.expect(character_create_model)
     @characters_ns.response(200, 'Character updated successfully', character_model)
+    @characters_ns.response(401, 'Authentication required')
+    @token_required
     def put(self, id):
         """
-        Update a character by ID.
+        Update a character by ID (requires authentication).
         """
         data = request.get_json()
 
@@ -347,8 +405,13 @@ class Character(Resource):
 
     @characters_ns.doc('delete_character')
     @characters_ns.response(204, 'Character deleted')
+    @characters_ns.response(401, 'Authentication required')
+    @characters_ns.response(403, 'Admin privileges required')
+    @admin_required
     def delete(self, id):
-        """Delete a character by ID."""
+        """
+        Delete a character by ID (requires admin privileges).
+        """
         char_idx = next(
             (idx for idx, char in enumerate(CHARACTERS) if char['id'] == id),
             None

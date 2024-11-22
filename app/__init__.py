@@ -9,14 +9,26 @@ def create_app():
     # Initialize Flask app
     app = Flask(__name__)
 
-    # Initialize Flask-RESTX with Swagger UI as default
+    # Define JWT authorization in Swagger
+    authorizations = {
+        'Bearer Auth': {
+            'type': 'apiKey',
+            'in': 'header',
+            'name': 'Authorization',
+            'description': "Type in the *'Value'* input box below: **'Bearer &lt;JWT&gt;'**",
+        },
+    }
+
+    # Initialize Flask-RESTX with Swagger UI and authorization
     api = Api(
         app,
         version='1.0',
         title='Game of Thrones API',
         description='A simple API for managing Game of Thrones characters',
-        doc='/docs',  # Swagger UI route
-        prefix='/api/v1'
+        doc='/docs',
+        prefix='/api/v1',
+        authorizations=authorizations,
+        security='Bearer Auth'  # Applies to all endpoints by default
     )
 
     # Redirect root URL to Swagger UI
@@ -35,8 +47,9 @@ def create_app():
             'docs_url': '/docs'
         }
 
-    # Import routes here to avoid circular imports
-    from .routes import characters_ns
+    # Import routes
+    from .routes import characters_ns, auth_ns
+    api.add_namespace(auth_ns, path='/auth')
     api.add_namespace(characters_ns, path='/characters')
 
     return app
