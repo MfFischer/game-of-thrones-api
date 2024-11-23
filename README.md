@@ -1,24 +1,28 @@
 # 🐉 Game of Thrones Character API
 
-A RESTful API built with Flask-RESTX that manages Game of Thrones character data. This API provides CRUD operations, filtering, sorting, and pagination capabilities.
+A RESTful API built with Flask-RESTX that manages Game of Thrones character data with SQLite database and JWT authentication.
 
 ## 📋 Table of Contents
 - [Features](#-features)
 - [Prerequisites](#-prerequisites)
 - [Installation](#-installation)
 - [Running the Server](#-running-the-server)
+- [Authentication](#-authentication)
 - [API Documentation](#-api-documentation)
-- [Examples](#-examples)
+
 
 ## ✨ Features
 - CRUD operations for characters
+- JWT-based authentication and authorization
+- SQLite database for data persistence
+- Role-based access control (Admin/User)
 - Pagination support
 - Advanced filtering options
 - Sorting capabilities
 - Swagger UI documentation
-- Data persistence
 - Input validation
 - Case-insensitive search
+- Database-level operations
 
 ## 🔧 Prerequisites
 - Python 3.8 or higher
@@ -49,6 +53,44 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+4. Initialize the database
+```bash
+python scripts/init_db.py
+```
+
+## 🔐 Authentication
+
+The API uses JWT (JSON Web Tokens) for authentication.
+
+### Default Users
+- Admin: username: `admin`, password: `admin123`
+- User: username: `user`, password: `user123`
+
+### Authentication Flow
+1. Register a new user:
+```http
+POST /api/v1/auth/register
+{
+    "username": "your_username",
+    "password": "your_password",
+    "role": "user"  # or "admin"
+}
+```
+
+2. Login to get JWT token:
+```http
+POST /api/v1/auth/login
+{
+    "username": "your_username",
+    "password": "your_password"
+}
+```
+
+3. Use the token in subsequent requests:
+```http
+Authorization: Bearer <your_token>
+```
+
 ## 🏃‍♂️ Running the Server
 
 1. Start the server
@@ -65,7 +107,40 @@ http://localhost:5000/docs
 
 ### Endpoints
 
-#### 1.  Get All Characters
+#### Authentication Endpoints
+
+##### 1. Register User
+```http
+POST /api/v1/auth/register
+```
+Register a new user.
+
+**Request Body:**
+```json
+{
+    "username": "newuser",
+    "password": "password123",
+    "role": "user"
+}
+```
+
+##### 2. Login
+```http
+POST /api/v1/auth/login
+```
+Login and receive JWT token.
+
+**Request Body:**
+```json
+{
+    "username": "newuser",
+    "password": "password123"
+}
+```
+
+#### Character Endpoints
+
+##### 1. Get All Characters
 ```http
 GET /api/v1/characters/
 ```
@@ -82,142 +157,80 @@ Get a list of characters with filtering and pagination options.
 - `sort_by` (string): Field to sort by (name, age, house, role)
 - `sort_order` (string): Sort direction (asc, desc)
 
-**Example:**
-```http
-GET /api/v1/characters/?house=stark&age_more_than=18&sort_by=age&sort_order=desc
-```
-
-#### 2. Get Single Character
+##### 2. Get Single Character
 ```http
 GET /api/v1/characters/{id}
 ```
-Get details of a specific character.
 
-**Example:**
-```http
-GET /api/v1/characters/1
-```
-
-#### 3. Create Character
+##### 3. Create Character (Authenticated)
 ```http
 POST /api/v1/characters/
 ```
-Create a new character.
 
-**Request Body:**
-```json
-{
-  "name": "Jon Snow",
-  "house": "Stark",
-  "age": 17,
-  "role": "Lord Commander "
-}
-```
-
-#### 4. Update Character
+##### 4. Update Character (Authenticated)
 ```http
 PUT /api/v1/characters/{id}
 ```
-Update an existing character.
 
-**Request Body:**
-```json
-{
-  "name": "Jon Snow",
-  "house": "Stark",
-  "age": 17,
-  "role": "Lord Commander"
-}
-```
-
-#### 5. Delete Character
+##### 5. Delete Character (Admin Only)
 ```http
 DELETE /api/v1/characters/{id}
-```
-Delete a character by ID.
-
-## 💡 Examples
-
-### Filtering Characters
-```http
-# Get all Stark house members over 18
-GET /api/v1/characters/?house=stark&age_more_than=18
-
-# Search by name
-GET /api/v1/characters/?name=jon%20snow
-
-# Complex filtering
-GET /api/v1/characters/?house=stark&age_more_than=18&age_less_than=30
-```
-
-### Sorting Characters
-```http
-# Sort by age descending
-GET /api/v1/characters/?sort_by=age&sort_order=desc
-
-# Sort by house name ascending
-GET /api/v1/characters/?sort_by=house&sort_order=asc
-```
-
-### Pagination
-```http
-# Get first 10 characters
-GET /api/v1/characters/?limit=10&skip=0
-
-# Get next 10 characters
-GET /api/v1/characters/?limit=10&skip=10
 ```
 
 ## 🗄️ Project Structure
 ```
 game-of-thrones-api/
-├── app/
+│
+├── .venv/                     # Virtual environment directory
+│
+├── app/                       # Main application package
 │   ├── __init__.py
 │   ├── models.py
 │   ├── routes.py
-│   └── utils.py
-├── data/
-│   └── characters.json
-├── .gitignore
-├── README.md
-├── requirements.txt
-└── run.py
-```
-
-## 🔐 Error Handling
-
-The API uses standard HTTP response codes:
-- `200`: Success
-- `201`: Created
-- `204`: No Content (successful deletion)
-- `400`: Bad Request
-- `404`: Not Found
-- `500`: Server Error
-
-Error responses include detailed messages:
-```json
-{
-  "message": "Error description",
-  "errors": {
-    "field": ["specific error details"]
-  }
-}
-```
+│   ├── config.py
+│   └── auth.py
+│
+├── data/                     
+│   ├── got_api.db        
+│   └── characters.json       
+│
+├── tests/                     
+│   ├── __init__.py           
+│   ├── conftest.py           
+│   ├── test__init__.py       
+│   ├── test_crud.py          
+│   ├── test_filters.py       
+│   ├── test_models.py        
+│   └── test_utils.py         
+│
+├── .gitignore                
+├── directory-structure.md    
+├── pytest.ini               
+├── README.md                
+└── requirements.txt
+```        
 
 ## 🛠️ Technical Approach
 
 1. **Architecture**
    - Flask-RESTX for API framework
-   - Marshmallow for data validation
-   - JSON file for data persistence
+   - SQLite for database
+   - SQLAlchemy for ORM
+   - JWT for authentication
+   - Marshmallow for validation
    - Swagger UI for documentation
 
-2. **Design Decisions**
-   - Auto-generated IDs for new characters
-   - Case-insensitive searching
-   - Normalized without "House" prefix 
-   - Deduplication of results
-   - Comprehensive error handling
+2. **Database Design**
+   - Proper indexing on commonly queried fields
+   - Database-level constraints
+   - Efficient query optimization
+   - Transaction management
+
+3. **Security Features**
+   - JWT token authentication
+   - Password hashing
+   - Role-based access control
+   - Protected routes
 
 ## 🧪 Testing
 
@@ -225,37 +238,37 @@ This project includes comprehensive unit tests covering all endpoints and major 
 
 ### Running Tests
 
-1. Install test dependencies:
+Install test dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Run tests with coverage:
+Run tests with coverage:
 ```bash
 pytest --cov=app tests/
 ```
 
-3. Generate HTML coverage report:
+Generate HTML coverage report:
 ```bash
 pytest --cov=app --cov-report=html tests/
 ```
-The report will be available in the `htmlcov` directory.
+
+The report will be available in the htmlcov directory.
 
 ### Test Structure
 
-- `tests/conftest.py`: Test fixtures and configuration
-- `tests/test_crud.py`: Tests for CRUD operations
-- `tests/test_filters.py`: Tests for filtering and sorting functionality
-
+tests/conftest.py: Test fixtures and configuration
+tests/test_crud.py: Tests for CRUD operations
+tests/test_filters.py: Tests for filtering and sorting functionality
 ### Test Coverage
 
-Current test coverage includes:
+### Test Coverage
+- ✅ Authentication flows
 - ✅ All CRUD operations
+- ✅ Database operations
 - ✅ Input validation
 - ✅ Error handling
-- ✅ Filtering and sorting
-- ✅ Pagination
-- ✅ Edge cases
+- ✅ Authorization checks
 
 ### Running Specific Tests
 
@@ -283,4 +296,4 @@ pytest -v tests/
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.

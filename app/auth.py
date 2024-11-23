@@ -1,54 +1,76 @@
-# auth.py
 from functools import wraps
-from flask import request
+from flask import request, current_app
 import jwt
-from datetime import datetime, timedelta
-
-# In-memory user storage (in production, this would be a database)
-USERS = {
-    "admin": {
-        "username": "admin",
-        "password": "admin123",  # In production, this should be hashed
-        "role": "admin"
-    }
-}
-
-# Configuration
-JWT_SECRET_KEY = 'your-secret-key'  # In production, use a secure secret key
-JWT_EXPIRATION_DELTA = timedelta(hours=1)
-
-
-def register_user(username, password, role='user'):
-    """Register a new user."""
-    if username in USERS:
-        return False, "Username already exists"
-
-    USERS[username] = {
-        "username": username,
-        "password": password,  # In production, this should be hashed
-        "role": role
-    }
-    return True, "User registered successfully"
+from datetime import datetime, timedelta, timezone
+from .models import User
 
 
 def generate_token(username):
     """Generate a JWT token for a user."""
-    payload = {
-        'username': username,
-        'role': USERS[username]['role'],
-        'exp': datetime.now() + JWT_EXPIRATION_DELTA
-    }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
+    try:
+        # Get user from database
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            print(f"User not found: {username}")
+            raise ValueError('User not found')
+
+        # Create token with UTC timestamps
+        now = datetime.now(timezone.utc)
+        payload = {
+            'username': username,
+            'role': user.role,
+            'exp': now + timedelta(hours=1),  # Expiration
+            'iat': now,  # Issued at
+            'nbf': now  # Not valid before
+        }
+
+        # Generate token
+        token = jwt.encode(
+            payload,
+            current_app.config.get('SECRET_KEY'),
+            algorithm='HS256'
+        )
+
+        print(f"Generated token for user {username} at {now}")
+        return token
+
+    except Exception as e:
+        print(f"Error generating token: {str(e)}")
+        raise
 
 
 def verify_token(token):
     """Verify a JWT token."""
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
+        print(f"Verifying token: {token[:20]}...")
+
+        # Decode with clock skew tolerance
+        payload = jwt.decode(
+            token,
+            current_app.config.get('SECRET_KEY'),
+            algorithms=['HS256'],
+            leeway=timedelta(seconds=30)  # Allow 30 seconds of clock skew
+        )
+
+        print(f"Token decoded successfully. Payload: {payload}")
+
+        # Verify user exists
+        user = User.query.filter_by(username=payload.get('username')).first()
+        if not user:
+            print(f"User from token not found: {payload.get('username')}")
+            return None
+
+        print(f"Token verified for user: {user.username}")
         return payload
-    except jwt.ExpiredSignatureError:
+
+    except jwt.ExpiredSignatureError as e:
+        print(f"Token expired: {str(e)}")
         return None
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        print(f"Invalid token error: {str(e)}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error during token verification: {str(e)}")
         return None
 
 
@@ -57,37 +79,62 @@ def token_required(f):
 
     @wraps(f)
     def decorated(*args, **kwargs):
+        print("Starting token validation...")
+
+        # Get token from header
         token = None
         auth_header = request.headers.get('Authorization')
+        print(f"Authorization header: {auth_header}")
 
-        if auth_header:
-            try:
-                token = auth_header.split(" ")[1]  # Bearer <token>
-            except IndexError:
-                return {'message': 'Invalid token format'}, 401
+        if not auth_header:
+            print("No Authorization header found")
+            return {'message': 'Token is missing', 'status': 401}, 401
 
-        if not token:
-            return {'message': 'Token is missing'}, 401
+        if not auth_header.startswith('Bearer '):
+            print("Invalid Authorization header format")
+            return {'message': 'Invalid token format', 'status': 401}, 401
 
-        payload = verify_token(token)
-        if not payload:
-            return {'message': 'Invalid or expired token'}, 401
+        try:
+            token = auth_header.split(' ')[1]
+            print(f"Extracted token: {token[:20]}...")
 
-        # Add user info to request context
-        request.current_user = payload
-        return f(*args, **kwargs)
+            # Verify token
+            payload = verify_token(token)
+            if not payload:
+                print("Token verification failed")
+                return {'message': 'Invalid token', 'status': 401}, 401
+
+            # Get user from database
+            current_user = User.query.filter_by(username=payload['username']).first()
+            if not current_user:
+                print(f"User not found in database: {payload['username']}")
+                return {'message': 'User not found', 'status': 401}, 401
+
+            print(f"Token validated successfully for user: {current_user.username}")
+            request.current_user = current_user
+            return f(*args, **kwargs)
+
+        except Exception as e:
+            print(f"Error in token_required decorator: {str(e)}")
+            return {'message': f'Token validation failed: {str(e)}', 'status': 401}, 401
 
     return decorated
 
 
 def admin_required(f):
-    """Decorator to restrict routes to admin users only."""
+    """Decorator to require admin role."""
 
     @wraps(f)
     @token_required
     def decorated(*args, **kwargs):
-        if request.current_user['role'] != 'admin':
-            return {'message': 'Admin privileges required'}, 403
+        if request.current_user.role != 'admin':
+            return {'message': 'Admin privileges required', 'status': 403}, 403
         return f(*args, **kwargs)
 
     return decorated
+
+def init_app(app):
+    """Initialize authentication module with app config."""
+    if not app.config.get('SECRET_KEY'):
+        app.config['SECRET_KEY'] = 'your-secret-key-here'  # Default for development
+        print("WARNING: Using default secret key")
