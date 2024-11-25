@@ -49,7 +49,8 @@ def verify_token(token):
             token,
             current_app.config.get('SECRET_KEY'),
             algorithms=['HS256'],
-            leeway=timedelta(seconds=30)  # Allow 30 seconds of clock skew
+            # Allow 30 seconds of clock skew
+            leeway=timedelta(seconds=30)
         )
 
         print(f"Token decoded successfully. Payload: {payload}")

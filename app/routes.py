@@ -4,10 +4,18 @@ API routes and resources.
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from marshmallow import Schema, fields as ma_fields, validate
-from sqlalchemy import func, and_, or_, desc, asc, distinct
+from sqlalchemy import func, and_, desc, asc
 from datetime import datetime, UTC
-from .models import db, CharacterModel, User, get_character_model, get_auth_models
-from .auth import token_required, admin_required, generate_token, verify_token
+from .models import (
+    db,
+    CharacterModel,
+    User,
+    get_character_model,
+    get_auth_models
+)
+from .auth import token_required, admin_required, generate_token
+from typing import Union, Tuple, Dict, Any, List
+from sqlalchemy.exc import SQLAlchemyError
 
 # Create namespaces
 auth_ns = Namespace('auth', description='Authentication operations')
@@ -87,37 +95,46 @@ class Register(Resource):
     @auth_ns.doc('register')
     @auth_ns.expect(auth_models['register_input'])
     @auth_ns.response(201, 'User registered successfully')
-    @auth_ns.response(400, 'Registration failed', auth_models['error_response'])
+    @auth_ns.response(400, 'Bad Request', auth_models['error_response'])
     def post(self):
         """Register a new user"""
         try:
+            # First check if content type is JSON
+            if not request.is_json:
+                return {'message': 'Content-Type must be application/json'}, 400
+
+            # Then parse JSON data
             data = request.get_json()
+            if data is None:  # This catches malformed JSON
+                return {'message': 'Invalid JSON format'}, 400
+
+            # Check for required fields
             username = data.get('username')
             password = data.get('password')
-            role = data.get('role', 'user')  # Default role is 'user'
-
             if not username or not password:
-                return {'message': 'Username and password are required', 'status': 400}, 400
+                return {'message': 'Username and password are required'}, 400
 
-            # Check if user already exists
+            # Check if user exists
             if User.query.filter_by(username=username).first():
-                return {'message': 'Username already exists', 'status': 400}, 400
+                return {'message': 'Username already exists'}, 400
 
             # Create new user
-            user = User(
-                username=username,
-                role=role
-            )
-            user.set_password(password)  # This uses the method from your User model
+            try:
+                user = User(
+                    username=username,
+                    role=data.get('role', 'user')
+                )
+                user.set_password(password)
+                db.session.add(user)
+                db.session.commit()
+                return {'message': 'User registered successfully'}, 201
 
-            db.session.add(user)
-            db.session.commit()
-
-            return {'message': 'User registered successfully'}, 201
+            except SQLAlchemyError as e:
+                db.session.rollback()
+                return {'message': 'Database error occurred', 'error': str(e)}, 500
 
         except Exception as e:
-            db.session.rollback()
-            return {'message': f'Registration failed: {str(e)}', 'status': 400}, 400
+            return {'message': f'Registration failed: {str(e)}'}, 500
 
 
 @auth_ns.route('/login')
@@ -125,66 +142,70 @@ class Login(Resource):
     @auth_ns.doc('login')
     @auth_ns.expect(auth_models['login_input'])
     @auth_ns.response(200, 'Success', auth_models['token_response'])
+    @auth_ns.response(400, 'Bad Request', auth_models['error_response'])
     @auth_ns.response(401, 'Authentication failed', auth_models['error_response'])
     def post(self):
         """Login and receive JWT token"""
         try:
+            # First check if content type is JSON
+            if not request.is_json:
+                return {'message': 'Content-Type must be application/json'}, 400
+
+            # Then parse JSON data
             data = request.get_json()
+            if data is None:  # This catches malformed JSON
+                return {'message': 'Invalid JSON format'}, 400
+
+            # Check for required fields
             username = data.get('username')
             password = data.get('password')
-
             if not username or not password:
-                return {'message': 'Username and password are required', 'status': 401}, 401
-
-            # Debug print
-            print(f"Login attempt for user: {username}")
+                return {'message': 'Username and password are required'}, 400
 
             # Find user in database
             user = User.query.filter_by(username=username).first()
-
             if not user:
-                print(f"User {username} not found in database")
-                return {'message': 'Invalid credentials', 'status': 401}, 401
+                return {'message': 'Invalid credentials'}, 401
 
-            # Debug print
-            print(f"Found user: {user.username}, role: {user.role}")
-
+            # Verify password
             if not user.check_password(password):
-                print(f"Invalid password for user: {username}")
-                return {'message': 'Invalid credentials', 'status': 401}, 401
+                return {'message': 'Invalid credentials'}, 401
 
             # Generate token
-            try:
-                token = generate_token(username)
-                return {
-                    'token': token,
-                    'type': 'Bearer',
-                    'expires_in': 3600,  # 1 hour
-                    'username': username,
-                    'role': user.role
-                }, 200
-            except Exception as e:
-                print(f"Token generation error: {str(e)}")
-                return {'message': 'Error generating token', 'status': 500}, 500
+            token = generate_token(username)
+            return {
+                'token': token,
+                'type': 'Bearer',
+                'expires_in': 3600,
+                'username': username,
+                'role': user.role
+            }, 200
 
         except Exception as e:
             print(f"Login error: {str(e)}")
-            return {'message': f'Login failed: {str(e)}', 'status': 401}, 401
-
+            return {'message': 'Internal server error'}, 500
 
 @characters_ns.route('/')
 class CharacterList(Resource):
     @characters_ns.doc('list_characters',
                       params={
                           'skip': {'description': 'Number of characters to skip', 'type': 'integer', 'default': 0},
-                          'limit': {'description': 'Maximum number of characters to return', 'type': 'integer', 'default': 20},
+                          'limit': {
+                              'description': 'Maximum number of characters to return',
+                              'type': 'integer',
+                              'default': 20
+                          },
                           'house': {'description': 'Filter by house name (case-insensitive)', 'type': 'string'},
                           'name': {'description': 'Filter by character name (case-insensitive)', 'type': 'string'},
                           'role': {'description': 'Filter by character role (case-insensitive)', 'type': 'string'},
                           'age_more_than': {'description': 'Filter by minimum age', 'type': 'integer'},
                           'age_less_than': {'description': 'Filter by maximum age', 'type': 'integer'},
                           'sort_by': {'description': 'Field to sort by (name, age, house, role)', 'type': 'string'},
-                          'sort_order': {'description': 'Sort order (asc or desc)', 'type': 'string', 'enum': ['asc', 'desc'], 'default': 'asc'}
+                          'sort_order': {
+                              'description': 'Sort order (asc or desc)',
+                              'type': 'string', 'enum': ['asc', 'desc'],
+                              'default': 'asc'
+                          }
                       })
     @characters_ns.response(200, 'Success', list_response)
     def get(self):
@@ -326,10 +347,14 @@ class CharacterList(Resource):
             if errors:
                 return {'message': 'Validation failed', 'errors': errors}, 400
 
-            # Create new character
+            # Normalize the house name before creating the character
+            normalized_house = normalize_house_name(data['house'])
+
+            # Create new character with normalized house name
             new_character = CharacterModel(
                 name=data['name'],
-                house=data['house'],
+                # Capitalize the first letter of each word
+                house=normalized_house.title(),
                 age=data['age'],
                 role=data['role'],
                 created_at=datetime.now(UTC),
@@ -354,16 +379,50 @@ class CharacterList(Resource):
             return {'message': f'Error creating character: {str(e)}'}, 500
 
 
-@characters_ns.route('/<int:id>')
-@characters_ns.param('id', 'Character identifier')
+@characters_ns.route('/<character_identifier>')
+@characters_ns.param('character_identifier', 'Character ID or name')
 @characters_ns.response(404, 'Character not found', error_response)
 class Character(Resource):
+    def _get_character_by_identifier(self, identifier: str) -> Union[CharacterModel, Tuple[Dict, int]]:
+        """
+        Helper method to get character by ID or name.
+        """
+        try:
+            # Try to convert to integer for ID lookup
+            char_id = int(identifier)
+            character = CharacterModel.query.get(char_id)
+            if character:
+                return character
+        except ValueError:
+            # If conversion fails, search by name
+            character = CharacterModel.query.filter(
+                CharacterModel.name.ilike(f"%{identifier}%")
+            ).first()
+            if character:
+                return character
+
+            # Try exact name match if partial match fails
+            character = CharacterModel.query.filter_by(name=identifier).first()
+            if character:
+                return character
+
+        return {
+            'message': 'Character not found',
+            'detail': f"No character found with identifier '{identifier}'"
+        }, 404
+
     @characters_ns.doc('get_character')
     @characters_ns.response(200, 'Success', character_model)
-    def get(self, id):
-        """Get a single character by ID."""
+    def get(self, character_identifier):
+        """
+        Get a single character by ID or name.
+        """
         try:
-            character = CharacterModel.query.get_or_404(id)
+            result = self._get_character_by_identifier(character_identifier)
+            if isinstance(result, tuple):
+                return result
+
+            character = result
             return {
                 'id': character.id,
                 'name': character.name,
@@ -374,17 +433,27 @@ class Character(Resource):
                 'updated_at': character.updated_at.isoformat()
             }
         except Exception as e:
-            return {'message': f'Error retrieving character: {str(e)}'}, 500
+            characters_ns.logger.error(f"Error retrieving character: {str(e)}")
+            return {
+                'message': 'Error retrieving character',
+                'error': str(e)
+            }, 500
 
     @characters_ns.doc('update_character')
     @characters_ns.expect(character_create_model)
     @characters_ns.response(200, 'Character updated successfully', character_model)
     @characters_ns.response(401, 'Authentication required')
     @token_required
-    def put(self, id):
-        """Update a character by ID (requires authentication)."""
+    def put(self, character_identifier):
+        """
+        Update a character by ID or name (requires authentication).
+        """
         try:
-            character = CharacterModel.query.get_or_404(id)
+            result = self._get_character_by_identifier(character_identifier)
+            if isinstance(result, tuple):
+                return result
+
+            character = result
             data = request.get_json()
 
             # Create schema for validation
@@ -398,11 +467,17 @@ class Character(Resource):
             schema = CharacterCreateSchema()
             errors = schema.validate(data)
             if errors:
-                return {'message': 'Validation failed', 'errors': errors}, 400
+                return {
+                    'message': 'Validation failed',
+                    'errors': errors
+                }, 400
+
+            # Normalize the house name before updating
+            normalized_house = normalize_house_name(data['house'])
 
             # Update fields
             character.name = data['name']
-            character.house = data['house']
+            character.house = normalized_house.title()  # Capitalize first letter of each word
             character.age = data['age']
             character.role = data['role']
             character.updated_at = datetime.now(UTC)
@@ -419,93 +494,210 @@ class Character(Resource):
                 'updated_at': character.updated_at.isoformat()
             }
 
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            characters_ns.logger.error(f"Database error updating character: {str(e)}")
+            return {
+                'message': 'Database error occurred',
+                'error': str(e)
+            }, 500
         except Exception as e:
             db.session.rollback()
-            return {'message': f'Error updating character: {str(e)}'}, 500
+            characters_ns.logger.error(f"Error updating character: {str(e)}")
+            return {
+                'message': 'Error updating character',
+                'error': str(e)
+            }, 500
 
     @characters_ns.doc('delete_character')
     @characters_ns.response(204, 'Character deleted')
     @characters_ns.response(401, 'Authentication required')
     @characters_ns.response(403, 'Admin privileges required')
+    @characters_ns.response(404, 'Character not found')
     @admin_required
-    def delete(self, id):
-        """Delete a character by ID (requires admin privileges)."""
+    def delete(self, character_identifier):
+        """
+        Delete a character by ID or name (requires admin privileges).
+        """
         try:
-            character = CharacterModel.query.get_or_404(id)
-            db.session.delete(character)
-            db.session.commit()
-            return '', 204
+            result = self._get_character_by_identifier(character_identifier)
+            if isinstance(result, tuple):
+                return result
 
-        except Exception as e:
-            db.session.rollback()
-            return {'message': f'Error deleting character: {str(e)}'}, 500
+            character = result
 
-
-
-@characters_ns.route('/search')
-class CharacterSearch(Resource):
-    @characters_ns.doc('search_characters',
-                      params={
-                          'q': {'description': 'Search term', 'type': 'string'},
-                          'fields': {'description': 'Fields to search (comma-separated)', 'type': 'string'},
-                      })
-    @characters_ns.response(200, 'Success', list_response)
-    def get(self):
-        """Advanced search with relevance scoring."""
-        try:
-            search_term = request.args.get('q', '').lower()
-            fields = request.args.get('fields', 'name,house,role').split(',')
-
-            if not search_term:
-                return {'message': 'Search term is required'}, 400
-
-            # Build dynamic search conditions
-            conditions = []
-            for field in fields:
-                if hasattr(CharacterModel, field):
-                    conditions.append(
-                        func.lower(getattr(CharacterModel, field)).like(f'%{search_term}%')
-                    )
-
-            if not conditions:
-                return {'message': 'No valid search fields specified'}, 400
-
-            # Calculate relevance score
-            relevance_score = None
-            for condition in conditions:
-                if relevance_score is None:
-                    relevance_score = condition
-                else:
-                    relevance_score = relevance_score + condition
-
-            # Execute search query with relevance scoring
-            results = db.session.query(
-                CharacterModel,
-                relevance_score.label('relevance')
-            ).filter(
-                or_(*conditions)
-            ).order_by(
-                desc('relevance')
-            ).all()
-
-            return {
-                'status': 'success',
-                'metadata': {
-                    'total_results': len(results),
-                    'search_term': search_term,
-                    'fields_searched': fields
-                },
-                'results': [{
-                    'id': char.id,
-                    'name': char.name,
-                    'house': char.house,
-                    'age': char.age,
-                    'role': char.role,
-                    'relevance': float(relevance),
-                    'created_at': char.created_at.isoformat(),
-                    'updated_at': char.updated_at.isoformat()
-                } for char, relevance in results]
+            # Store character info for response
+            char_info = {
+                'id': character.id,
+                'name': character.name
             }
 
+            # Delete the character
+            db.session.delete(character)
+            db.session.commit()
+
+            # Return success message with deleted character info
+            return {
+                'message': 'Character deleted successfully',
+                'deleted_character': char_info
+            }, 200
+
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            characters_ns.logger.error(f"Database error deleting character: {str(e)}")
+            return {
+                'message': 'Database error occurred',
+                'error': str(e)
+            }, 500
         except Exception as e:
-            return {'message': f'Error performing search: {str(e)}'}, 500
+            db.session.rollback()
+            characters_ns.logger.error(f"Error deleting character: {str(e)}")
+            return {
+                'message': 'Error deleting character',
+                'error': str(e)
+            }, 500
+
+
+@characters_ns.route('/statistics')
+class CharacterStatistics(Resource):
+    """
+    Character Statistics Resource.
+
+    Provides endpoints to retrieve statistical information about characters,
+    including demographics and distribution across houses and roles.
+    """
+
+    @characters_ns.doc('get_statistics')
+    @characters_ns.response(200, 'Success')
+    @characters_ns.response(500, 'Internal Server Error')
+    def get(self) -> Dict[str, Any]:
+        """
+        Retrieve comprehensive character statistics.
+
+        Returns:
+            dict: A dictionary containing three main statistical categories:
+                - House statistics (member counts, age demographics)
+                - Age distribution across all characters
+                - Role distribution by house
+        """
+        try:
+            return {
+                'status': 'success',
+                'statistics': {
+                    'house_statistics': self._get_house_statistics(),
+                    'age_distribution': self._get_age_distribution(),
+                    'role_distribution': self._get_role_distribution()
+                }
+            }
+        except Exception as e:
+            # Log the error and return a generic error message
+            characters_ns.logger.error(f"Error in get_statistics: {str(e)}")
+            return {'status': 'error', 'message': 'Internal server error'}, 500
+
+    def _get_house_statistics(self) -> List[Dict[str, Any]]:
+        """
+        Calculate statistical metrics for each house.
+
+        Computes the following metrics per house:
+        - Total member count
+        - Average age of members
+        - Age of youngest member
+        - Age of oldest member
+        """
+        # Query database for house-specific statistics
+        house_stats = db.session.query(
+            CharacterModel.house,
+            func.count(CharacterModel.id).label('member_count'),
+            func.avg(CharacterModel.age).label('average_age'),
+            func.min(CharacterModel.age).label('youngest'),
+            func.max(CharacterModel.age).label('oldest')
+        ).filter(
+            # Exclude entries with no house assignment
+            CharacterModel.house.isnot(None)
+        ).group_by(
+            CharacterModel.house
+        ).all()
+
+        # Format the statistics into a list of dictionaries
+        return [{
+            'house': stat.house,
+            'member_count': stat.member_count,
+            'average_age': round(float(stat.average_age or 0), 2),
+            'youngest': stat.youngest,
+            'oldest': stat.oldest
+        } for stat in house_stats]
+
+    def _get_age_distribution(self) -> List[Dict[str, Any]]:
+        """
+        Calculate the distribution of characters across age ranges.
+
+        Age ranges are predefined as:
+        - Under 20
+        - 21-40
+        - 41-60
+        - Over 60
+        """
+        # Define age range boundaries and labels
+        age_ranges = [
+            (0, 20, 'Under 20'),
+            (21, 40, '21-40'),
+            (41, 60, '41-60'),
+            (61, float('inf'), 'Over 60')
+        ]
+
+        distribution = []
+        total_characters = CharacterModel.query.count()
+
+        # Calculate distribution for each age range
+        for min_age, max_age, label in age_ranges:
+            # Build query with age filters
+            query = CharacterModel.query.filter(
+                CharacterModel.age.isnot(None),
+                CharacterModel.age >= min_age
+            )
+
+            # Add upper bound for all ranges except the last one
+            if max_age != float('inf'):
+                query = query.filter(CharacterModel.age <= max_age)
+
+            # Count characters in this range
+            count = query.count()
+
+            # Calculate percentage and round to 2 decimal places
+            percentage = round((count / total_characters) * 100, 2) if total_characters > 0 else 0
+
+            distribution.append({
+                'range': label,
+                'count': count,
+                'percentage': percentage
+            })
+
+        return distribution
+
+    def _get_role_distribution(self) -> List[Dict[str, Any]]:
+        """
+        Calculate the distribution of roles within each house.
+        """
+        # Query database for role distribution statistics
+        role_stats = db.session.query(
+            CharacterModel.house,
+            CharacterModel.role,
+            func.count(CharacterModel.id).label('count')
+        ).filter(
+            # Exclude entries with no role or house
+            CharacterModel.role.isnot(None),
+            CharacterModel.house.isnot(None)
+        ).group_by(
+            CharacterModel.house,
+            CharacterModel.role
+        ).order_by(
+            CharacterModel.house,
+            desc('count')  # Sort by count in descending order
+        ).all()
+
+        # Format the statistics into a list of dictionaries
+        return [{
+            'house': stat.house,
+            'role': stat.role,
+            'count': stat.count
+        } for stat in role_stats]

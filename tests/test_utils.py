@@ -1,138 +1,144 @@
 """
-Test utility functions.
+Test utility functions for the application.
 """
-import json
-import app.utils
-from pathlib import Path
-from app.utils import (
-    load_characters,
-    save_characters,
-    get_data_file_path,
-    get_default_characters
-)
+import pytest
+from app.utils import get_default_characters, seed_default_characters
+from app.models import db, CharacterModel
 
-def test_get_data_file_path():
-    """Test getting data file path."""
-    path = get_data_file_path()
-    assert isinstance(path, Path)
-    assert path.name == 'characters.json'
-    assert 'data' in str(path)
+@pytest.fixture
+def db_setup(app):
+    """Setup database for testing."""
+    with app.app_context():
+        db.create_all()
+        yield
+        db.drop_all()
+
+@pytest.fixture
+def empty_database(app, db_setup):
+    """Ensure database is empty before each test."""
+    with app.app_context():
+        CharacterModel.query.delete()
+        db.session.commit()
+        yield
 
 def test_get_default_characters():
     """Test getting default character data."""
     characters = get_default_characters()
+
+    # Test return type and length
     assert isinstance(characters, list)
-    assert len(characters) > 0
+    assert len(characters) == 2
     assert all(isinstance(char, dict) for char in characters)
-    assert all(required in char for char in characters
-              for required in ['id', 'name', 'house', 'age', 'role'])
 
-def test_load_characters_file_not_exists(tmp_path):
-    """Test loading characters when file doesn't exist."""
-    # Temporarily change data file path
-    original_path = app.utils.get_data_file_path
-    app.utils.get_data_file_path = lambda: tmp_path / 'characters.json'
+    # Test data structure
+    expected_fields = {'name', 'house', 'age', 'role'}
+    for char in characters:
+        assert set(char.keys()) == expected_fields
 
-    try:
-        characters = load_characters()
-        assert isinstance(characters, list)
-        assert len(characters) > 0
-        assert all(isinstance(char, dict) for char in characters)
+    # Test specific character data
+    jon = next(char for char in characters if char['name'] == 'Jon Snow')
+    assert jon == {
+        'name': 'Jon Snow',
+        'house': 'Stark',
+        'age': 25,
+        'role': "Lord Commander of the Night's Watch"
+    }
 
-        # Check if file was created
-        assert (tmp_path / 'characters.json').exists()
-    finally:
-        # Restore original path function
-        app.utils.get_data_file_path = original_path
+    dany = next(char for char in characters if char['name'] == 'Daenerys Targaryen')
+    assert dany == {
+        'name': 'Daenerys Targaryen',
+        'house': 'Targaryen',
+        'age': 24,
+        'role': "Queen of the Seven Kingdoms"
+    }
 
-def test_save_characters(tmp_path):
-    """Test saving characters to file."""
-    # Test data
+def test_seed_default_characters_empty_db(app, empty_database):
+    """Test seeding default characters into empty database."""
+    with app.app_context():
+        # Verify database is empty initially
+        assert CharacterModel.query.count() == 0
+
+        # Perform seeding
+        seed_default_characters()
+
+        # Verify correct number of characters
+        characters = CharacterModel.query.all()
+        assert len(characters) == 2
+
+        # Verify Jon Snow's data
+        jon = CharacterModel.query.filter_by(name='Jon Snow').first()
+        assert jon is not None
+        assert jon.house == 'Stark'
+        assert jon.age == 25
+        assert jon.role == "Lord Commander of the Night's Watch"
+
+        # Verify Daenerys's data
+        dany = CharacterModel.query.filter_by(name='Daenerys Targaryen').first()
+        assert dany is not None
+        assert dany.house == 'Targaryen'
+        assert dany.age == 24
+        assert dany.role == "Queen of the Seven Kingdoms"
+
+def test_seed_default_characters_with_existing_data(app, empty_database, sample_character):
+    """Test seeding when database already contains data."""
+    with app.app_context():
+        # Add a test character
+        char = CharacterModel(**sample_character)
+        db.session.add(char)
+        db.session.commit()
+
+        # Attempt seeding
+        seed_default_characters()
+
+        # Verify only original character exists
+        characters = CharacterModel.query.all()
+        assert len(characters) == 1
+        assert characters[0].name == sample_character['name']
+        assert characters[0].house == sample_character['house']
+        assert characters[0].age == sample_character['age']
+        assert characters[0].role == sample_character['role']
+
+def test_seed_default_characters_error_handling(app, empty_database, mocker):
+    """Test error handling during database seeding."""
+    with app.app_context():
+        # Mock db.session.commit to raise an exception
+        mocker.patch.object(db.session, 'commit', side_effect=Exception("Database error"))
+
+        # Attempt seeding
+        seed_default_characters()
+
+        # Verify database remains empty due to rollback
+        assert CharacterModel.query.count() == 0
+
+def test_seed_default_characters_duplicate_prevention(app, empty_database):
+    """Test that seeding twice doesn't create duplicates."""
+    with app.app_context():
+        # Seed once
+        seed_default_characters()
+        first_count = CharacterModel.query.count()
+
+        # Seed again
+        seed_default_characters()
+        second_count = CharacterModel.query.count()
+
+        # Verify counts are the same
+        assert first_count == second_count == 2
+
+def test_default_characters_data_integrity():
+    """Test that default character data meets all requirements."""
     characters = get_default_characters()
 
-    # Temporarily change data file path
-    original_path = app.utils.get_data_file_path
-    test_file = tmp_path / 'test_characters.json'
-    app.utils.get_data_file_path = lambda: test_file
+    for char in characters:
+        # Verify all required fields are present and of correct type
+        assert isinstance(char['name'], str)
+        assert isinstance(char['house'], str)
+        assert isinstance(char['age'], int)
+        assert isinstance(char['role'], str)
 
-    try:
-        # Save characters
-        save_characters(characters)
+        # Verify age is reasonable
+        assert 0 < char['age'] < 150
 
-        # Verify file exists and content is correct
-        assert test_file.exists()
-        with open(test_file, 'r', encoding='utf-8') as f:
-            saved_data = json.load(f)
-            assert saved_data == characters
-    finally:
-        # Restore original path function
-        app.utils.get_data_file_path = original_path
-
-def test_load_characters_invalid_json(tmp_path):
-    """Test loading characters with invalid JSON."""
-    # Create invalid JSON file
-    test_file = tmp_path / 'invalid_characters.json'
-    test_file.write_text('invalid json')
-
-    # Temporarily change data file path
-    original_path = app.utils.get_data_file_path
-    app.utils.get_data_file_path = lambda: test_file
-
-    try:
-        characters = load_characters()
-        assert isinstance(characters, list)
-        assert len(characters) == len(get_default_characters())
-        assert characters == get_default_characters()  # Should return default data
-    finally:
-        # Restore original path function
-        app.utils.get_data_file_path = original_path
-
-def test_load_characters_permission_error(tmp_path, mocker):
-    """Test loading characters with permission error."""
-    mocker.patch('builtins.open', side_effect=PermissionError("Permission denied"))
-
-    characters = load_characters()
-    assert isinstance(characters, list)
-    assert len(characters) == len(get_default_characters())
-    assert characters == get_default_characters()
-
-
-def test_save_characters_error_handling(tmp_path, mocker):
-    """Test error handling in save_characters function."""
-    # Mock open to raise an error
-    mocker.patch('builtins.open', side_effect=PermissionError("Permission denied"))
-
-    # Should not raise an exception, just print error
-    save_characters([{"id": 1, "name": "Test"}])
-
-
-def test_save_characters_directory_creation(tmp_path):
-    """Test directory creation when saving characters."""
-    # Create a deep nested path
-    deep_path = tmp_path / 'deep' / 'nested' / 'path'
-    test_file = deep_path / 'characters.json'
-
-    # Mock the get_data_file_path function
-    import app.utils
-    original_path = app.utils.get_data_file_path
-    app.utils.get_data_file_path = lambda: test_file
-
-    try:
-        # Test data
-        test_data = [{"id": 1, "name": "Test", "house": "Test", "age": 25, "role": "Test"}]
-
-        # Save characters
-        save_characters(test_data)
-
-        # Verify file and directories were created
-        assert deep_path.exists(), "Deep directory structure was not created"
-        assert test_file.exists(), "JSON file was not created"
-
-        # Verify file contents
-        with open(test_file, 'r', encoding='utf-8') as f:
-            saved_data = json.load(f)
-            assert saved_data == test_data, "Saved data doesn't match test data"
-
-    finally:
-        # Restore original function
-        app.utils.get_data_file_path = original_path
+        # Verify strings are not empty
+        assert char['name'].strip()
+        assert char['house'].strip()
+        assert char['role'].strip()

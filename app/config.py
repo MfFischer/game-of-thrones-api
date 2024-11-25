@@ -16,4 +16,5 @@ class Config:
 
     # JWT config
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
-    JWT_LEEWAY = timedelta(seconds=50)  # Allow 50 seconds of clock skew
+    # Allow 50 seconds of clock skew
+    JWT_LEEWAY = timedelta(seconds=50)

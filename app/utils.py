@@ -1,8 +1,9 @@
 """
 Helper functions for the application.
 """
+
 from typing import List, Dict
-from .models import db, CharacterModel
+from app.models import db, CharacterModel
 
 def get_default_characters() -> List[Dict]:
     """Return default character data for seeding the database."""
