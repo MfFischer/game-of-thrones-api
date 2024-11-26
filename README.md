@@ -13,6 +13,7 @@ A RESTful API built with Flask-RESTX that manages Game of Thrones character data
 
 ## ✨ Features
 - CRUD operations for characters
+- Character statistics and analytics
 - JWT-based authentication and authorization
 - SQLite database for data persistence
 - Role-based access control (Admin/User)
@@ -86,7 +87,15 @@ POST /api/v1/auth/login
 }
 ```
 
-3. Use the token in subsequent requests:
+3. Using JWT Token in Swagger UI:
+- After successful login, copy the JWT token from the response
+- Click the "Authorize" button at the top of the Swagger UI
+- n the authorization popup, enter: `Bearer <your_token>`,
+  - Example:  `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
+- Click "Authorize" to save
+- All subsequent requests will include the JWT token
+
+4. Use the token in subsequent requests:
 ```http
 Authorization: Bearer <your_token>
 ```
@@ -166,13 +175,56 @@ GET /api/v1/characters/{id}
 ```http
 POST /api/v1/characters/
 ```
+##### 4. Get Character Statistics
+```http
+GET /api/v1/characters/statistics
+```
 
-##### 4. Update Character (Authenticated)
+Get comprehensive statistics about characters including:
+
+- House statistics (member counts, age demographics)
+- Age distribution across all characters
+- Role distribution by house
+
+**Response Example:**
+
+```json
+{
+    "status": "success",
+    "statistics": {
+        "house_statistics": [
+            {
+                "house": "Stark",
+                "member_count": 10,
+                "average_age": 25.5,
+                "youngest": 8,
+                "oldest": 45
+            }
+        ],
+        "age_distribution": [
+            {
+                "range": "Under 20",
+                "count": 15,
+                "percentage": 25.5
+            }
+        ],
+        "role_distribution": [
+            {
+                "house": "Stark",
+                "role": "Lord",
+                "count": 3
+            }
+        ]
+    }
+}
+```
+
+##### 5. Update Character (Authenticated)
 ```http
 PUT /api/v1/characters/{id}
 ```
 
-##### 5. Delete Character (Admin Only)
+##### 6. Delete Character (Admin Only)
 ```http
 DELETE /api/v1/characters/{id}
 ```
@@ -198,8 +250,8 @@ game-of-thrones-api/
 │   ├── __init__.py           
 │   ├── conftest.py           
 │   ├── test__init__.py       
-│   ├── test_crud.py          
-│   ├── test_filters.py       
+│   ├── test_auth.py          
+│   ├── test_routes.py       
 │   ├── test_models.py        
 │   └── test_utils.py         
 │
